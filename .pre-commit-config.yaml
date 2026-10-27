@@ -1,0 +1,71 @@
+repos:
+  # Ruff - Fast Python linter
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.1.0
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # MyPy - Static type checker
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.7.0
+    hooks:
+      - id: mypy
+        additional_dependencies: [
+          "types-requests",
+          "types-PyYAML",
+          "pandas-stubs",
+          "numpy",
+          "scikit-learn",
+          "xgboost",
+          "lightgbm",
+        ]
+        args: [--strict, --show-error-codes]
+
+  # Black - Code formatter (backup to ruff-format)
+  - repo: https://github.com/psf/black
+    rev: 23.0.0
+    hooks:
+      - id: black
+        language_version: python3.11
+
+  # General hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: debug-logger
+      - id: detect-private-key
+
+  # Commit message validation
+  - repo: https://github.com/committools/pre-commit-commitlint
+    rev: v1.0.0
+    hooks:
+      - id: commitlint
+        stages: [commit-msg]
+        args: [--config, .commitlintrc.yaml]
+
+  # DVC file validation
+  - repo: local
+    hooks:
+      - id: dvc-check
+        name: DVC Pipeline Check
+        entry: dvc status
+        language: system
+        types: [file]
+        files: \.(dvc|yaml|yml)$
+        pass_filenames: false
+        always_run: true
+
+  # Check for large files
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: check-added-large-files
+        args: ['--maxkb=50000']

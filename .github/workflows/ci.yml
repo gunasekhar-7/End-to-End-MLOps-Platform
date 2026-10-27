@@ -1,0 +1,365 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: '3.11'
+  UV_VERSION: 'latest'
+
+jobs:
+  # Job 1: Lint and Type Check
+  lint-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Needed for git history in DVC
+      
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: uv sync --all-extras --frozen
+      
+      - name: Install pre-commit
+        run: uv run pre-commit install
+      
+      - name: Run pre-commit hooks
+        run: uv run pre-commit run --all-files
+      
+      - name: Run type check (mypy)
+        run: uv run mypy src
+      
+      - name: Run unit tests
+        run: uv run pytest tests/unit -v --cov=src --cov-report=xml
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+
+  # Job 2: Train Model
+  train:
+    name: Train Model
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: lint-test
+    permissions:
+      contents: read
+      actions: read  # For reading DVC cache
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: uv sync --frozen
+      
+      - name: Configure DVC remote
+        run: |
+          dvc remote modify myremote url s3://${{ secrets.DVC_BUCKET }}
+          dvc remote modify myremote access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+          dvc remote modify myremote secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          dvc remote modify myremote region ${{ secrets.AWS_DEFAULT_REGION }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      
+      - name: Pull DVC data
+        run: dvc pull
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      
+      - name: Start MLflow server
+        run: |
+          pip install mlflow boto3
+          mlflow server --host 0.0.0.0 --port 5000 \
+            --backend-store-uri sqlite:///mlflow/mlflow.db \
+            --default-artifact-root s3://${{ secrets.DVC_BUCKET }}/mlflow \
+            --artifacts-destination s3://${{ secrets.DVC_BUCKET }}/mlflow &
+          sleep 10
+        env:
+          MLFLOW_S3_ENDPOINT_URL: ${{ secrets.MLFLOW_S3_ENDPOINT_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      
+      - name: Run training pipeline
+        run: dvc repro train
+        env:
+          MLFLOW_TRACKING_URI: http://localhost:5000
+          MLFLOW_S3_ENDPOINT_URL: ${{ secrets.MLFLOW_S3_ENDPOINT_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      
+      - name: Upload model artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-artifacts
+          path: |
+            models/model.pkl
+            models/preprocessor.pkl
+            metrics/train.json
+            metrics/val.json
+          retention-days: 7
+      
+      - name: Show metrics
+        run: |
+          echo "## Training Metrics" >> $GITHUB_STEP_SUMMARY
+          cat metrics/train.json | jq -r 'to_entries[] | "- \\(.key): \\(.value)"' >> $GITHUB_STEP_SUMMARY
+      
+      - name: Comment PR with metrics
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const metrics = JSON.parse(fs.readFileSync('metrics/train.json', 'utf8'));
+            const body = `## 🤖 Training Metrics
+            | Metric | Value |
+            |--------|-------|
+            ${Object.entries(metrics).filter(([k]) => !['git_sha', 'model_type', 'threshold', 'deployment_gates_passed', 'gate_checks'].includes(k)).map(([k, v]) => `| ${k} | ${v} |`).join('\n')}
+            `;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+  # Job 3: Deployment Gate (Required Check)
+  gate:
+    name: Deployment Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: train
+    # This job must pass for deployment to proceed
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Download model artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: model-artifacts
+          path: artifacts
+      
+      - name: Check deployment gates
+        id: gate-check
+        run: |
+          # Read metrics
+          METRICS_FILE="artifacts/metrics/train.json"
+          if [ ! -f "$METRICS_FILE" ]; then
+            echo "❌ Metrics file not found"
+            exit 1
+          fi
+          
+          # Read thresholds from params.yaml
+          MIN_F1=$(grep 'min_f1:' params.yaml | awk '{print $2}')
+          MIN_PRECISION=$(grep 'min_precision:' params.yaml | awk '{print $2}')
+          MIN_RECALL=$(grep 'min_recall:' params.yaml | awk '{print $2}')
+          MIN_PR_AUC=$(grep 'min_pr_auc:' params.yaml | awk '{print $2}')
+          MIN_ROC_AUC=$(grep 'min_roc_auc:' params.yaml | awk '{print $2}')
+          
+          # Extract metrics
+          F1=$(jq -r '.f1' $METRICS_FILE)
+          PRECISION=$(jq -r '.precision' $METRICS_FILE)
+          RECALL=$(jq -r '.recall' $METRICS_FILE)
+          PR_AUC=$(jq -r '.pr_auc' $METRICS_FILE)
+          ROC_AUC=$(jq -r '.roc_auc' $METRICS_FILE)
+          GATES_PASSED=$(jq -r '.deployment_gates_passed // false' $METRICS_FILE)
+          
+          echo "=== Deployment Gate Check ==="
+          echo "F1: $F1 (min: $MIN_F1)"
+          echo "Precision: $PRECISION (min: $MIN_PRECISION)"
+          echo "Recall: $RECALL (min: $MIN_RECALL)"
+          echo "PR-AUC: $PR_AUC (min: $MIN_PR_AUC)"
+          echo "ROC-AUC: $ROC_AUC (min: $MIN_ROC_AUC)"
+          echo "Gates Passed: $GATES_PASSED"
+          
+          # Check each threshold
+          FAILED=0
+          
+          check_metric() {
+            local name=$1
+            local value=$2
+            local threshold=$3
+            if (( $(echo "$value < $threshold" | bc -l) )); then
+              echo "❌ $name: $value < $threshold (FAIL)"
+              FAILED=1
+            else
+              echo "✅ $name: $value >= $threshold (PASS)"
+            fi
+          }
+          
+          check_metric "F1" "$F1" "$MIN_F1"
+          check_metric "Precision" "$PRECISION" "$MIN_PRECISION"
+          check_metric "Recall" "$RECALL" "$MIN_RECALL"
+          check_metric "PR-AUC" "$PR_AUC" "$MIN_PR_AUC"
+          check_metric "ROC-AUC" "$ROC_AUC" "$MIN_ROC_AUC"
+          
+          if [ "$GATES_PASSED" != "true" ]; then
+            echo "❌ Overall gates check failed"
+            FAILED=1
+          fi
+          
+          if [ $FAILED -eq 1 ]; then
+            echo "GATE_RESULT=failed" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "GATE_RESULT=passed" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Gate result
+        run: |
+          if [ "${{ steps.gate-check.outputs.GATE_RESULT }}" == "failed" ]; then
+            echo "❌ Deployment gate FAILED - model does not meet minimum thresholds"
+            exit 1
+          else
+            echo "✅ Deployment gate PASSED - model meets all thresholds"
+          fi
+
+  # Job 4: Build Docker Images
+  docker-build:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract metadata for API
+        id: meta-api
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/fraud-api
+          tags: |
+            type=sha,prefix=sha-
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+      
+      - name: Build and push API image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.serve
+          push: true
+          tags: ${{ steps.meta-api.outputs.tags }}
+          labels: ${{ steps.meta-api.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Extract metadata for Train
+        id: meta-train
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/fraud-train
+          tags: |
+            type=sha,prefix=sha-
+            type=ref,event=branch
+      
+      - name: Build and push Train image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.train
+          push: true
+          tags: ${{ steps.meta-train.outputs.tags }}
+          labels: ${{ steps.meta-train.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Extract metadata for Monitor
+        id: meta-monitor
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/fraud-monitor
+          tags: |
+            type=sha,prefix=sha-
+            type=ref,event=branch
+      
+      - name: Build and push Monitor image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.monitor
+          push: true
+          tags: ${{ steps.meta-monitor.outputs.tags }}
+          labels: ${{ steps.meta-monitor.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Job 5: Deploy to Staging (Optional)
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: docker-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: staging
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Deploy to staging
+        run: |
+          echo "Deploying to staging environment..."
+          # Add your staging deployment commands here
+          # Example: docker compose -f docker/docker-compose.yml up -d
+        env:
+          DOCKER_REGISTRY: ghcr.io
+          DOCKER_USERNAME: ${{ github.actor }}
+          DOCKER_PASSWORD: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,64 @@
+# Dockerfile for monitoring (drift detection)
+# Multi-stage build: builder -> runtime
+
+# Builder stage
+FROM python:3.11-slim as builder
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Copy dependency files
+COPY pyproject.toml uv.lock* ./
+
+# Copy source code first (needed for package build)
+COPY src/ ./src/
+COPY params.yaml ./
+COPY README.md ./
+
+# Install dependencies (including the package)
+RUN uv sync --frozen --no-dev
+
+# Runtime stage
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    cron \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd --create-home --shell /bin/bash appuser
+
+# Copy installed packages from builder
+COPY --from=builder /app/.venv /app/.venv
+
+# Copy source code
+COPY --from=builder /app/src ./src
+COPY --from=builder /app/params.yaml ./
+
+# Create directories
+RUN mkdir -p models data/processed metrics reports/drift && chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
+# Set PATH to use venv
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Setup cron for scheduled drift detection
+# Run every 24 hours at 2 AM
+RUN echo "0 2 * * * cd /app && python -m mlops_fraud_detection.monitor.drift >> /app/logs/drift_cron.log 2>&1" | crontab -
+
+# Default command - run drift detection once, then start cron
+CMD ["sh", "-c", "python -m mlops_fraud_detection.monitor.drift && cron -f"]

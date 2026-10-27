@@ -1,0 +1,206 @@
+{
+  "dashboard": {
+    "title": "Fraud Detection - API Health",
+    "uid": "fraud-api-health",
+    "tags": ["mlops", "fraud-detection", "api"],
+    "timezone": "utc",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Request Rate (req/s)",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 0, "w": 8, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{job=\"fraud-api\"}[5m])",
+            "legendFormat": "{{handler}} - {{status}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Error Rate",
+        "type": "timeseries",
+        "gridPos": {"x": 8, "y": 0, "w": 8, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{job=\"fraud-api\",status=~\"5..\"}[5m]) / rate(http_requests_total{job=\"fraud-api\"}[5m])",
+            "legendFormat": "5xx Error Rate",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(http_requests_total{job=\"fraud-api\",status=~\"4..\"}[5m]) / rate(http_requests_total{job=\"fraud-api\"}[5m])",
+            "legendFormat": "4xx Error Rate",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "min": 0,
+            "max": 1,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 0.01},
+                {"color": "red", "value": 0.05}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Latency (p50, p95, p99)",
+        "type": "timeseries",
+        "gridPos": {"x": 16, "y": 0, "w": 8, "h": 8},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(http_request_duration_seconds_bucket{job=\"fraud-api\"}[5m]))",
+            "legendFormat": "p50",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job=\"fraud-api\"}[5m]))",
+            "legendFormat": "p95",
+            "refId": "B"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(http_request_duration_seconds_bucket{job=\"fraud-api\"}[5m]))",
+            "legendFormat": "p99",
+            "refId": "C"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 0.1},
+                {"color": "red", "value": 0.5}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Prediction Distribution",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(fraud_predictions_total{job=\"fraud-api\",prediction=\"fraud\"}[5m])",
+            "legendFormat": "Fraud Predictions",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(fraud_predictions_total{job=\"fraud-api\",prediction=\"not_fraud\"}[5m])",
+            "legendFormat": "Not Fraud Predictions",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "Fraud Rate",
+        "type": "timeseries",
+        "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(fraud_predictions_total{job=\"fraud-api\",prediction=\"fraud\"}[5m]) / rate(fraud_predictions_total{job=\"fraud-api\"}[5m])",
+            "legendFormat": "Fraud Rate",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "min": 0,
+            "max": 1
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "Average Fraud Probability",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "fraud_prediction_probability{job=\"fraud-api\"}",
+            "legendFormat": "Avg Fraud Probability",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "min": 0,
+            "max": 1
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "In-Flight Requests",
+        "type": "timeseries",
+        "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "fraud_detection_inprogress{job=\"fraud-api\"}",
+            "legendFormat": "{{handler}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "API Uptime",
+        "type": "stat",
+        "gridPos": {"x": 18, "y": 16, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "up{job=\"fraud-api\"}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "value", "scheme": "Greens"},
+            "mappings": [
+              {"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}}, "result": {"text": "DOWN", "color": "red"}},
+              {"type": "value", "options": {"1": {"text": "UP", "color": "green"}}, "result": {"text": "UP", "color": "green"}}
+            ]
+          }
+        }
+      }
+    ],
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "refresh": "10s"
+  },
+  "overwrite": true
+}

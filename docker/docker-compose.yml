@@ -1,0 +1,180 @@
+services:
+  # MinIO - S3-compatible storage for DVC
+  # NOTE: Run `docker login` first if you hit rate limits (Docker Hub anonymous pulls are rate-limited)
+  # To use: docker compose -f docker/docker-compose.yml --profile storage up -d minio
+  minio:
+    image: minio/minio:latest
+    container_name: mlops-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Console
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - mlops-network
+    profiles:
+      - storage
+
+  # MLflow Tracking Server
+  mlflow:
+    image: python:3.11-slim
+    container_name: mlops-mlflow
+    command: >
+      sh -c "pip install mlflow boto3 psycopg2-binary &&
+             mlflow server --host 0.0.0.0 --port 5000
+             --backend-store-uri sqlite:///mlflow/mlflow.db
+             --default-artifact-root ./mlflow/artifacts"
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow_data:/mlflow
+    networks:
+      - mlops-network
+
+  # Training job (runs on demand)
+  train:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.train
+    container_name: mlops-train
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    volumes:
+      - ../data:/app/data
+      - ../models:/app/models
+      - ../metrics:/app/metrics
+      - ../reports:/app/reports
+      - mlflow_data:/mlflow
+    depends_on:
+      mlflow:
+        condition: service_started
+    networks:
+      - mlops-network
+    profiles:
+      - training
+
+  # FastAPI Inference Service
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.serve
+    container_name: mlops-api
+    ports:
+      - "8000:8000"
+    environment:
+      MODEL_PATH: /app/models/model.pkl
+      PREPROCESSOR_PATH: /app/models/preprocessor.pkl
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_MODEL_URI: models:/fraud-detection/Production
+      LOG_LEVEL: INFO
+    volumes:
+      - ../models:/app/models
+      - ../data/processed:/app/data/processed:ro
+      - ../metrics:/app/metrics:ro
+    depends_on:
+      mlflow:
+        condition: service_started
+    networks:
+      - mlops-network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  # Prometheus Metrics Collection
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: mlops-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../prometheus/rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    networks:
+      - mlops-network
+
+  # Grafana Dashboards
+  grafana:
+    image: grafana/grafana:10.1.0
+    container_name: mlops-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_INSTALL_PLUGINS: "grafana-piechart-panel"
+    volumes:
+      - ../grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ../grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - mlops-network
+
+  # Node Exporter for system metrics
+  node-exporter:
+    image: prom/node-exporter:v1.6.1
+    container_name: mlops-node-exporter
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - mlops-network
+
+  # Drift Detection Service
+  drift-detector:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.monitor
+    container_name: mlops-drift-detector
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    volumes:
+      - ../models:/app/models:ro
+      - ../data/processed:/app/data/processed:ro
+      - ../metrics:/app/metrics:ro
+      - ../reports:/app/reports
+      - ../logs:/app/logs
+    depends_on:
+      mlflow:
+        condition: service_started
+    networks:
+      - mlops-network
+    profiles:
+      - monitoring
+
+volumes:
+  minio_data:
+  mlflow_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  mlops-network:
+    driver: bridge

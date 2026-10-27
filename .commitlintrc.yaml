@@ -1,0 +1,42 @@
+extends: ['@commitlint/config-conventional']
+
+rules:
+  type-enum:
+    - 2
+    - always
+    - [
+        'feat',     # New feature
+        'fix',      # Bug fix
+        'docs',     # Documentation only
+        'style',    # Code style changes (formatting, etc.)
+        'refactor', # Code refactoring
+        'perf',     # Performance improvement
+        'test',     # Adding/updating tests
+        'build',    # Build system changes
+        'ci',       # CI/CD changes
+        'chore',    # Maintenance tasks
+        'revert',   # Revert commit
+      ]
+
+  subject-case:
+    - 2
+    - always
+    - sentence-case
+
+  subject-empty:
+    - 2
+    - never
+
+  subject-max-length:
+    - 2
+    - always
+    - 72
+
+  body-max-line-length:
+    - 2
+    - always
+    - 100
+
+  footer-leading-blank:
+    - 1
+    - always

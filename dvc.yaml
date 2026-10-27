@@ -1,0 +1,61 @@
+# DVC Pipeline Definition
+# Run with: dvc repro
+
+stages:
+  prepare:
+    cmd: python src/train/prepare_data.py
+    deps:
+      - src/train/prepare_data.py
+      - data/raw/fraud_data.csv
+      - params.yaml
+    outs:
+      - data/processed/train.parquet:
+          cache: true
+      - data/processed/val.parquet:
+          cache: true
+      - data/processed/test.parquet:
+          cache: true
+      - data/processed/preprocessor.pkl:
+          cache: true
+    params:
+      - preprocessing.test_size
+      - preprocessing.val_size
+      - preprocessing.stratify
+      - preprocessing.target_column
+      - preprocessing.handle_missing
+      - preprocessing.encode_categorical
+      - preprocessing.scale_numeric
+
+  train:
+    cmd: python src/train/train.py
+    deps:
+      - src/train/train.py
+      - src/common/utils.py
+      - data/processed/train.parquet
+      - data/processed/val.parquet
+      - data/processed/preprocessor.pkl
+      - params.yaml
+    outs:
+      - models/model.pkl:
+          cache: true
+    metrics:
+      - metrics/train.json:
+          cache: false
+      - metrics/val.json:
+          cache: false
+    params:
+      - training.model_type
+      - training.n_estimators
+      - training.max_depth
+      - training.learning_rate
+      - training.subsample
+      - training.colsample_bytree
+      - training.random_state
+      - training.n_jobs
+      - training.early_stopping_rounds
+      - training.eval_metric
+      - deployment_gates.min_f1
+      - deployment_gates.min_precision
+      - deployment_gates.min_recall
+      - deployment_gates.min_pr_auc
+      - deployment_gates.min_roc_auc

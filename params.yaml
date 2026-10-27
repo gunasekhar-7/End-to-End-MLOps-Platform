@@ -1,0 +1,84 @@
+# Single source of truth for hyperparameters, thresholds, and paths
+# Used by DVC pipeline, training script, CI gate, and serving code
+
+# Data paths
+data:
+  raw_path: "data/raw/fraud_data.csv"
+  processed_dir: "data/processed"
+  train_file: "data/processed/train.parquet"
+  val_file: "data/processed/val.parquet"
+  test_file: "data/processed/test.parquet"
+  external_dir: "data/external"
+  target_column: "isFraud"
+
+# Model paths
+model:
+  output_dir: "models"
+  model_file: "models/model.pkl"
+  preprocessor_file: "models/preprocessor.pkl"
+
+# Metrics output
+metrics:
+  train_file: "metrics/train.json"
+  val_file: "metrics/val.json"
+
+# Training hyperparameters
+training:
+  model_type: "xgboost"  # or "lightgbm", "random_forest", "logistic_regression"
+  n_estimators: 200
+  max_depth: 6
+  learning_rate: 0.1
+  subsample: 0.8
+  colsample_bytree: 0.8
+  random_state: 42
+  n_jobs: -1
+  early_stopping_rounds: 20
+  eval_metric: "auc"
+
+# Data preprocessing
+preprocessing:
+  test_size: 0.2
+  val_size: 0.1
+  stratify: true
+  handle_missing: "median"  # or "mean", "drop"
+  encode_categorical: "target"  # or "onehot", "label"
+  scale_numeric: true
+
+# MLflow configuration
+mlflow:
+  tracking_uri: "http://localhost:5000"
+  experiment_name: "fraud-detection"
+  model_name: "fraud-detection"
+  artifact_location: "mlflow-artifacts"
+
+# Deployment gating thresholds (CI gate checks these)
+deployment_gates:
+  min_f1: 0.85
+  min_precision: 0.80
+  min_recall: 0.80
+  min_pr_auc: 0.85
+  min_roc_auc: 0.90
+
+# Serving configuration
+serving:
+  host: "0.0.0.0"
+  port: 8000
+  threshold: 0.5  # Classification threshold for fraud prediction
+  log_level: "INFO"
+  workers: 4
+
+# Monitoring
+monitoring:
+  drift_check_interval_hours: 24
+  psi_threshold: 0.2
+  ks_threshold: 0.05
+  prediction_drift_threshold: 2.0  # Standard deviations from baseline
+  model_staleness_days: 30
+
+# DVC remote configuration
+dvc:
+  remote_name: "myremote"
+  remote_url: "s3://mlops-fraud-data"
+  minio_endpoint: "http://localhost:9000"
+  minio_access_key: "minioadmin"
+  minio_secret_key: "minioadmin"

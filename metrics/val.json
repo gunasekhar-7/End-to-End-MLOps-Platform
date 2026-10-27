@@ -1,0 +1,23 @@
+{
+  "accuracy": 0.980052155654147,
+  "precision": 0.9088397790055248,
+  "recall": 0.4777347531461762,
+  "f1": 0.626269035532995,
+  "roc_auc": 0.9359563248688554,
+  "pr_auc": 0.7103384101292128,
+  "true_negatives": 56889,
+  "false_positives": 99,
+  "false_negatives": 1079,
+  "true_positives": 987,
+  "deployment_gates_passed": false,
+  "gate_checks": {
+    "f1": false,
+    "precision": true,
+    "recall": false,
+    "pr_auc": false,
+    "roc_auc": true
+  },
+  "git_sha": "unknown",
+  "model_type": "xgboost",
+  "threshold": 0.5
+}

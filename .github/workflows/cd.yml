@@ -1,0 +1,215 @@
+name: CD Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - staging
+          - production
+      image_tag:
+        description: 'Docker image tag to deploy'
+        required: false
+        default: 'latest'
+        type: string
+  release:
+    types: [published]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Job 1: Deploy to Staging
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name == 'workflow_dispatch' && inputs.environment == 'staging' || github.event_name == 'release'
+    environment: staging
+    permissions:
+      id-token: write
+      contents: read
+      packages: read
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Pull API image
+        run: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/fraud-api:${{ github.event.inputs.image_tag || 'latest' }}
+      
+      - name: Deploy to staging
+        run: |
+          echo "Deploying to staging..."
+          # Add your staging deployment commands here
+          # Example: docker compose -f docker/docker-compose.yml up -d api
+        env:
+          DOCKER_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/fraud-api:${{ github.event.inputs.image_tag || 'latest' }}
+
+  # Job 2: Deploy to Production
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name == 'workflow_dispatch' && inputs.environment == 'production' || github.event_name == 'release'
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+      packages: read
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Determine image tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" == "release" ]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.event.inputs.image_tag }}" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Pull production images
+        run: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/fraud-api:${{ steps.tag.outputs.tag }}
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/fraud-train:${{ steps.tag.outputs.tag }}
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/fraud-monitor:${{ steps.tag.outputs.tag }}
+      
+      - name: Run smoke tests
+        run: |
+          echo "Running smoke tests against production API..."
+          # Add smoke test commands here
+          # Example: curl -f http://production-api:8000/health
+      
+      - name: Promote MLflow model to Production
+        run: |
+          echo "Promoting MLflow model to Production stage..."
+          python -c "
+          import mlflow
+          client = mlflow.MlflowClient(tracking_uri='${{ secrets.MLFLOW_TRACKING_URI }}')
+          model_name = 'fraud-detection'
+          
+          # Get latest version in Staging
+          versions = client.get_latest_versions(model_name, stages=['Staging'])
+          if versions:
+            version = versions[0].version
+            client.transition_model_version_stage(
+              name=model_name,
+              version=version,
+              stage='Production',
+              archive_existing_versions=True
+            )
+            print(f'Promoted version {version} to Production')
+          else:
+            print('No model in Staging to promote')
+            exit(1)
+          "
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          MLFLOW_S3_ENDPOINT_URL: ${{ secrets.MLFLOW_S3_ENDPOINT_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      
+      - name: Notify on success
+        if: success()
+        run: |
+          echo "✅ Production deployment successful!"
+          # Add Slack/email notification here
+          # Example: curl -X POST -H 'Content-type: application/json' --data '{"text":"🚀 Fraud Detection model deployed to production"}' ${{ secrets.SLACK_WEBHOOK_URL }}
+      
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "❌ Production deployment failed!"
+          # Add Slack/email notification here
+          # Example: curl -X POST -H 'Content-type: application/json' --data '{"text":"💥 Fraud Detection production deployment FAILED"}' ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # Job 3: Rollback (Manual)
+  rollback:
+    name: Rollback Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name == 'workflow_dispatch' && inputs.environment == 'rollback'
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+      packages: read
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Rollback MLflow model
+        run: |
+          echo "Rolling back MLflow model..."
+          python -c "
+          import mlflow
+          client = mlflow.MlflowClient(tracking_uri='${{ secrets.MLFLOW_TRACKING_URI }}')
+          model_name = 'fraud-detection'
+          
+          # Get all versions
+          versions = client.search_model_versions(f'name=\"{model_name}\"')
+          prod_versions = [v for v in versions if v.current_stage == 'Production']
+          archived_versions = [v for v in versions if v.current_stage == 'Archived']
+          
+          if prod_versions and archived_versions:
+            # Archive current production
+            for v in prod_versions:
+              client.transition_model_version_stage(
+                name=model_name,
+                version=v.version,
+                stage='Archived'
+              )
+            # Promote latest archived to production
+            latest_archived = max(archived_versions, key=lambda v: int(v.version))
+            client.transition_model_version_stage(
+              name=model_name,
+              version=latest_archived.version,
+              stage='Production'
+            )
+            print(f'Rolled back to version {latest_archived.version}')
+          else:
+            print('Cannot rollback - insufficient version history')
+            exit(1)
+          "
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          MLFLOW_S3_ENDPOINT_URL: ${{ secrets.MLFLOW_S3_ENDPOINT_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      
+      - name: Notify rollback
+        run: |
+          echo "🔄 Production rollback completed"
+          # Add notification

@@ -1,0 +1,347 @@
+name: Automated Retraining
+
+on:
+  schedule:
+    # Run weekly on Monday at 2 AM UTC
+    - cron: '0 2 * * 1'
+  workflow_dispatch:
+    inputs:
+      force_retrain:
+        description: 'Force retrain even if no drift detected'
+        required: false
+        default: false
+        type: boolean
+      data_version:
+        description: 'Specific data version to use (DVC tag/commit)'
+        required: false
+        type: string
+
+env:
+  PYTHON_VERSION: '3.11'
+  UV_VERSION: 'latest'
+
+jobs:
+  # Job 1: Check Drift & Decide Retrain
+  check-drift:
+    name: Check Drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      should_retrain: ${{ steps.drift-check.outputs.should_retrain }}
+      drift_details: ${{ steps.drift-check.outputs.drift_details }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: uv sync --frozen
+      
+      - name: Configure DVC remote
+        run: |
+          dvc remote modify myremote url s3://${{ secrets.DVC_BUCKET }}
+          dvc remote modify myremote access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+          dvc remote modify myremote secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          dvc remote modify myremote region ${{ secrets.AWS_DEFAULT_REGION }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      
+      - name: Pull latest data
+        run: dvc pull
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      
+      - name: Start MLflow server
+        run: |
+          pip install mlflow boto3
+          mlflow server --host 0.0.0.0 --port 5000 \
+            --backend-store-uri sqlite:///mlflow/mlflow.db \
+            --default-artifact-root s3://${{ secrets.DVC_BUCKET }}/mlflow \
+            --artifacts-destination s3://${{ secrets.DVC_BUCKET }}/mlflow &
+          sleep 10
+        env:
+          MLFLOW_S3_ENDPOINT_URL: ${{ secrets.MLFLOW_S3_ENDPOINT_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      
+      - name: Run drift detection
+        id: drift-check
+        run: |
+          export MLFLOW_TRACKING_URI=http://localhost:5000
+          export MLFLOW_S3_ENDPOINT_URL=${{ secrets.MLFLOW_S3_ENDPOINT_URL }}
+          export AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+          export AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          export AWS_DEFAULT_REGION=${{ secrets.AWS_DEFAULT_REGION }}
+          
+          # Run drift detection
+          python -m src.monitor.drift
+          
+          # Read drift report
+          if [ -f "reports/drift/drift_report.json" ]; then
+            DRIFT_REPORT=$(cat reports/drift/drift_report.json)
+            OVERALL_DRIFT=$(echo "$DRIFT_REPORT" | jq -r '.overall_drift_detected')
+            DATA_DRIFT=$(echo "$DRIFT_REPORT" | jq -r '.data_drift.drift_detected // false')
+            PRED_DRIFT=$(echo "$DRIFT_REPORT" | jq -r '.prediction_drift.drift_detected // false')
+            MODEL_STALE=$(echo "$DRIFT_REPORT" | jq -r '.model_staleness.stale // false')
+            
+            echo "drift_details=$DRIFT_REPORT" >> $GITHUB_OUTPUT
+            
+            # Determine if retrain needed
+            FORCE_RETRAIN=${{ github.event.inputs.force_retrain || false }}
+            
+            if [ "$FORCE_RETRAIN" == "true" ] || [ "$OVERALL_DRIFT" == "true" ]; then
+              echo "should_retrain=true" >> $GITHUB_OUTPUT
+              echo "⚠️ Drift detected or force retrain enabled - retraining needed"
+            else
+              echo "should_retrain=false" >> $GITHUB_OUTPUT
+              echo "✅ No significant drift detected - skipping retrain"
+            fi
+          else
+            echo "should_retrain=false" >> $GITHUB_OUTPUT
+            echo "drift_details={}" >> $GITHUB_OUTPUT
+            echo "⚠️ No drift report generated"
+          fi
+
+  # Job 2: Retrain Model (conditional)
+  retrain:
+    name: Retrain Model
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: check-drift
+    if: needs.check-drift.outputs.should_retrain == 'true'
+    permissions:
+      contents: write  # For pushing model updates
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: uv sync --frozen
+      
+      - name: Configure DVC remote
+        run: |
+          dvc remote modify myremote url s3://${{ secrets.DVC_BUCKET }}
+          dvc remote modify myremote access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+          dvc remote modify myremote secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          dvc remote modify myremote region ${{ secrets.AWS_DEFAULT_REGION }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      
+      - name: Pull DVC data
+        run: dvc pull
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      
+      - name: Start MLflow server
+        run: |
+          pip install mlflow boto3
+          mlflow server --host 0.0.0.0 --port 5000 \
+            --backend-store-uri sqlite:///mlflow/mlflow.db \
+            --default-artifact-root s3://${{ secrets.DVC_BUCKET }}/mlflow \
+            --artifacts-destination s3://${{ secrets.DVC_BUCKET }}/mlflow &
+          sleep 10
+        env:
+          MLFLOW_S3_ENDPOINT_URL: ${{ secrets.MLFLOW_S3_ENDPOINT_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      
+      - name: Run full training pipeline
+        run: |
+          export MLFLOW_TRACKING_URI=http://localhost:5000
+          export MLFLOW_S3_ENDPOINT_URL=${{ secrets.MLFLOW_S3_ENDPOINT_URL }}
+          export AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+          export AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          export AWS_DEFAULT_REGION=${{ secrets.AWS_DEFAULT_REGION }}
+          
+          dvc repro
+      
+      - name: Check deployment gates
+        id: gate-check
+        run: |
+          METRICS_FILE="metrics/train.json"
+          
+          MIN_F1=$(grep 'min_f1:' params.yaml | awk '{print $2}')
+          MIN_PRECISION=$(grep 'min_precision:' params.yaml | awk '{print $2}')
+          MIN_RECALL=$(grep 'min_recall:' params.yaml | awk '{print $2}')
+          MIN_PR_AUC=$(grep 'min_pr_auc:' params.yaml | awk '{print $2}')
+          MIN_ROC_AUC=$(grep 'min_roc_auc:' params.yaml | awk '{print $2}')
+          
+          F1=$(jq -r '.f1' $METRICS_FILE)
+          PRECISION=$(jq -r '.precision' $METRICS_FILE)
+          RECALL=$(jq -r '.recall' $METRICS_FILE)
+          PR_AUC=$(jq -r '.pr_auc' $METRICS_FILE)
+          ROC_AUC=$(jq -r '.roc_auc' $METRICS_FILE)
+          GATES_PASSED=$(jq -r '.deployment_gates_passed // false' $METRICS_FILE)
+          
+          echo "=== Retrain Gate Check ==="
+          echo "F1: $F1 (min: $MIN_F1)"
+          echo "Precision: $PRECISION (min: $MIN_PRECISION)"
+          echo "Recall: $RECALL (min: $MIN_RECALL)"
+          echo "PR-AUC: $PR_AUC (min: $MIN_PR_AUC)"
+          echo "ROC-AUC: $ROC_AUC (min: $MIN_ROC_AUC)"
+          echo "Gates Passed: $GATES_PASSED"
+          
+          FAILED=0
+          
+          check_metric() {
+            local name=$1
+            local value=$2
+            local threshold=$3
+            if (( $(echo "$value < $threshold" | bc -l) )); then
+              echo "❌ $name: $value < $threshold (FAIL)"
+              FAILED=1
+            else
+              echo "✅ $name: $value >= $threshold (PASS)"
+            fi
+          }
+          
+          check_metric "F1" "$F1" "$MIN_F1"
+          check_metric "Precision" "$PRECISION" "$MIN_PRECISION"
+          check_metric "Recall" "$RECALL" "$MIN_RECALL"
+          check_metric "PR-AUC" "$PR_AUC" "$MIN_PR_AUC"
+          check_metric "ROC-AUC" "$ROC_AUC" "$MIN_ROC_AUC"
+          
+          if [ "$GATES_PASSED" != "true" ] || [ $FAILED -eq 1 ]; then
+            echo "GATE_RESULT=failed" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "GATE_RESULT=passed" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Promote model to Staging
+        if: steps.gate-check.outputs.GATE_RESULT == 'passed'
+        run: |
+          echo "Promoting new model to Staging..."
+          python -c "
+          import mlflow
+          client = mlflow.MlflowClient(tracking_uri='http://localhost:5000')
+          model_name = 'fraud-detection'
+          
+          # Get latest version
+          versions = client.get_latest_versions(model_name, stages=['None'])
+          if versions:
+            version = versions[0].version
+            client.transition_model_version_stage(
+              name=model_name,
+              version=version,
+              stage='Staging',
+              archive_existing_versions=False
+            )
+            print(f'Promoted version {version} to Staging')
+          else:
+            print('No new model version found')
+            exit(1)
+          "
+      
+      - name: Build and push Docker images
+        if: steps.gate-check.outputs.GATE_RESULT == 'passed'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.serve
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/fraud-api:sha-${{ github.sha }}
+            ghcr.io/${{ github.repository }}/fraud-api:retrain-${{ github.run_number }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Build train image
+        if: steps.gate-check.outputs.GATE_RESULT == 'passed'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.train
+          push: true
+          tags: ghcr.io/${{ github.repository }}/fraud-train:retrain-${{ github.run_number }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Build monitor image
+        if: steps.gate-check.outputs.GATE_RESULT == 'passed'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.monitor
+          push: true
+          tags: ghcr.io/${{ github.repository }}/fraud-monitor:retrain-${{ github.run_number }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Push DVC updates
+        if: steps.gate-check.outputs.GATE_RESULT == 'passed'
+        run: |
+          dvc push
+          # Optionally commit and push updated .dvc files
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .dvc/ dvc.lock
+          git commit -m "chore: update DVC lock files after retrain [skip ci]" || true
+          git push || true
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      
+      - name: Notify retrain complete
+        if: steps.gate-check.outputs.GATE_RESULT == 'passed'
+        run: |
+          echo "✅ Automated retraining completed successfully!"
+          echo "New model promoted to Staging and Docker images built."
+          # Add Slack/email notification
+      
+      - name: Notify retrain failed
+        if: steps.gate-check.outputs.GATE_RESULT == 'failed'
+        run: |
+          echo "❌ Retrained model did not meet deployment gates!"
+          echo "Model not promoted. Manual intervention required."
+          # Add Slack/email notification
+          exit 1
+
+  # Job 3: Notify No Retrain Needed
+  notify-no-retrain:
+    name: Notify - No Retrain Needed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: check-drift
+    if: needs.check-drift.outputs.should_retrain == 'false'
+    
+    steps:
+      - name: Log no retrain needed
+        run: |
+          echo "✅ No retrain needed - no significant drift detected"
+          echo "Drift details: ${{ needs.check-drift.outputs.drift_details }}"
+          # Add optional notification here

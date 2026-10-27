@@ -1,0 +1,255 @@
+{
+  "dashboard": {
+    "title": "Fraud Detection - Data Drift Monitoring",
+    "uid": "fraud-data-drift",
+    "tags": ["mlops", "fraud-detection", "drift"],
+    "timezone": "utc",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Overall Drift Status",
+        "type": "stat",
+        "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "fraud_drift_overall_detected",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "mappings": [
+              {"type": "value", "options": {"0": {"text": "✅ No Drift", "color": "green"}}, "result": {"text": "✅ No Drift", "color": "green"}},
+              {"type": "value", "options": {"1": {"text": "⚠️ Drift Detected", "color": "red"}}, "result": {"text": "⚠️ Drift Detected", "color": "red"}}
+            ],
+            "color": {"mode": "value", "scheme": "RdYlGn_r"}
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Data Drift Detected",
+        "type": "stat",
+        "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "fraud_drift_data_detected",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "mappings": [
+              {"type": "value", "options": {"0": {"text": "✅ No Drift", "color": "green"}}, "result": {"text": "✅ No Drift", "color": "green"}},
+              {"type": "value", "options": {"1": {"text": "⚠️ Drift Detected", "color": "red"}}, "result": {"text": "⚠️ Drift Detected", "color": "red"}}
+            ]
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Prediction Drift Detected",
+        "type": "stat",
+        "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "fraud_drift_prediction_detected",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "mappings": [
+              {"type": "value", "options": {"0": {"text": "✅ No Drift", "color": "green"}}, "result": {"text": "✅ No Drift", "color": "green"}},
+              {"type": "value", "options": {"1": {"text": "⚠️ Drift Detected", "color": "red"}}, "result": {"text": "⚠️ Drift Detected", "color": "red"}}
+            ]
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Model Stale",
+        "type": "stat",
+        "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "fraud_model_stale",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "mappings": [
+              {"type": "value", "options": {"0": {"text": "✅ Fresh", "color": "green"}}, "result": {"text": "✅ Fresh", "color": "green"}},
+              {"type": "value", "options": {"1": {"text": "⚠️ Stale", "color": "red"}}, "result": {"text": "⚠️ Stale", "color": "red"}}
+            ]
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "Feature PSI Scores",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "fraud_feature_psi{job=\"drift-detector\"}",
+            "legendFormat": "{{feature}} - PSI",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 0.1},
+                {"color": "orange", "value": 0.2},
+                {"color": "red", "value": 0.5}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "Feature KS Statistics",
+        "type": "timeseries",
+        "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "fraud_feature_ks{job=\"drift-detector\"}",
+            "legendFormat": "{{feature}} - KS",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 0.05},
+                {"color": "orange", "value": 0.1},
+                {"color": "red", "value": 0.2}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "Prediction Drift (Std Deviations)",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "fraud_prediction_drift_stddev",
+            "legendFormat": "Std Deviations from Baseline",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 1},
+                {"color": "orange", "value": 2},
+                {"color": "red", "value": 3}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "Baseline vs Current Fraud Rate",
+        "type": "timeseries",
+        "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "fraud_baseline_fraud_rate",
+            "legendFormat": "Baseline Fraud Rate",
+            "refId": "A"
+          },
+          {
+            "expr": "fraud_current_fraud_rate",
+            "legendFormat": "Current Fraud Rate",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "min": 0,
+            "max": 1
+          }
+        }
+      },
+      {
+        "id": 9,
+        "title": "Model Age (Days)",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 20, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "fraud_model_age_days",
+            "legendFormat": "Model Age",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 14},
+                {"color": "orange", "value": 30},
+                {"color": "red", "value": 60}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 10,
+        "title": "Drift Detection History",
+        "type": "table",
+        "gridPos": {"x": 12, "y": 20, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "fraud_drift_check_timestamp",
+            "format": "table",
+            "refId": "A"
+          }
+        ],
+        "transformations": [
+          {
+            "type": "organize",
+            "options": {
+              "fieldOrder": ["Time", "Data Drift", "Prediction Drift", "Model Stale", "Overall"]
+            }
+          }
+        ]
+      }
+    ],
+    "time": {
+      "from": "now-7d",
+      "to": "now"
+    },
+    "refresh": "5m"
+  },
+  "overwrite": true
+}

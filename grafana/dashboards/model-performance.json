@@ -1,0 +1,206 @@
+{
+  "dashboard": {
+    "title": "Fraud Detection - Model Performance",
+    "uid": "fraud-model-performance",
+    "tags": ["mlops", "fraud-detection", "model"],
+    "timezone": "utc",
+    "panels": [
+      {
+        "id": 1,
+        "title": "F1 Score Over Time",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "mlflow_metric_f1{model_name=\"fraud-detection\"}",
+            "legendFormat": "F1 Score",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "min": 0,
+            "max": 1,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "yellow", "value": 0.85},
+                {"color": "green", "value": 0.9}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Precision & Recall Over Time",
+        "type": "timeseries",
+        "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "mlflow_metric_precision{model_name=\"fraud-detection\"}",
+            "legendFormat": "Precision",
+            "refId": "A"
+          },
+          {
+            "expr": "mlflow_metric_recall{model_name=\"fraud-detection\"}",
+            "legendFormat": "Recall",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "min": 0,
+            "max": 1,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "yellow", "value": 0.8},
+                {"color": "green", "value": 0.85}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "ROC-AUC & PR-AUC Over Time",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "mlflow_metric_roc_auc{model_name=\"fraud-detection\"}",
+            "legendFormat": "ROC-AUC",
+            "refId": "A"
+          },
+          {
+            "expr": "mlflow_metric_pr_auc{model_name=\"fraud-detection\"}",
+            "legendFormat": "PR-AUC",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "min": 0,
+            "max": 1,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "yellow", "value": 0.85},
+                {"color": "green", "value": 0.9}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Model Version Deployments",
+        "type": "table",
+        "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "mlflow_model_version_info{model_name=\"fraud-detection\"}",
+            "format": "table",
+            "refId": "A"
+          }
+        ],
+        "transformations": [
+          {
+            "type": "organize",
+            "options": {
+              "excludeByDefault": false,
+              "fieldOrder": ["version", "stage", "creation_timestamp", "run_id"]
+            }
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Training Runs Count",
+        "type": "stat",
+        "gridPos": {"x": 0, "y": 16, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "count(mlflow_metric_f1{model_name=\"fraud-detection\"})",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "value", "scheme": "Greens"}
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "Best F1 Score",
+        "type": "stat",
+        "gridPos": {"x": 6, "y": 16, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "max_over_time(mlflow_metric_f1{model_name=\"fraud-detection\"}[30d])",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "min": 0,
+            "max": 1,
+            "color": {"mode": "value", "scheme": "Greens"}
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "Current Model Stage",
+        "type": "stat",
+        "gridPos": {"x": 12, "y": 16, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "mlflow_model_version_info{model_name=\"fraud-detection\",stage=\"Production\"}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "value", "scheme": "Blues"}
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "Days Since Last Retrain",
+        "type": "stat",
+        "gridPos": {"x": 18, "y": 16, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "(time() - mlflow_model_last_trained_timestamp) / 86400",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "value", "scheme": "RdYlGn_r"}
+          }
+        }
+      }
+    ],
+    "time": {
+      "from": "now-30d",
+      "to": "now"
+    },
+    "refresh": "30s"
+  },
+  "overwrite": true
+}
