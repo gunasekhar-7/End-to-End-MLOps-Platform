@@ -3,8 +3,7 @@ repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.17.2
     hooks:
-      - id: ruff
-        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-check
       - id: ruff-format
 
   # MyPy - Static type checker (using project environment & pyproject.toml settings)

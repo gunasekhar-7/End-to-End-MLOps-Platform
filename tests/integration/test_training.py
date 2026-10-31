@@ -61,7 +61,11 @@ class TestTrainingPipeline:
         import joblib
 
         from mlops_fraud_detection.train.prepare_data import prepare_data
-        from mlops_fraud_detection.train.train import create_model, evaluate_model, train_model
+        from mlops_fraud_detection.train.train import (
+            create_model,
+            evaluate_model,
+            train_model,
+        )
 
         # Setup
         data_dir = tmp_path / "data"
@@ -188,7 +192,11 @@ class TestTrainingPipeline:
     def test_model_types_and_load_data(self, sample_config, tmp_path):
         import copy
 
-        from mlops_fraud_detection.train.train import create_model, load_processed_data, train_model
+        from mlops_fraud_detection.train.train import (
+            create_model,
+            load_processed_data,
+            train_model,
+        )
 
         # Test model creation for all supported types
         for m_type in ["random_forest", "logistic_regression", "lightgbm"]:
@@ -219,6 +227,8 @@ class TestTrainingPipeline:
         x_tr, y_tr, x_v, y_v = load_processed_data(str(train_path), str(val_path), "is_fraud")
         assert len(x_tr) == 2
         assert len(y_tr) == 2
+        assert len(x_v) == 2
+        assert len(y_v) == 2
 
     def test_train_main_execution(self, sample_config, monkeypatch, tmp_path):
         import copy
