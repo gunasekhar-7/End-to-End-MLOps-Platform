@@ -226,7 +226,7 @@ class DriftDetector:
             return {"stale": True, "reason": "Model file not found"}
 
         mtime = datetime.fromtimestamp(model_path.stat().st_mtime)
-        age_days = (datetime.now() - mtime).days
+        age_days = max(0, int((datetime.now() - mtime).total_seconds() / 86400))
 
         result: dict[str, Any] = {
             "model_age_days": age_days,
