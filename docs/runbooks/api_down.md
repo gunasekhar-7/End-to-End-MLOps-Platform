@@ -103,7 +103,7 @@ docker exec mlops-api ping minio
    ```bash
    # Verify model exists
    docker exec mlops-api ls -la models/
-   
+
    # Re-run training if needed
    make train-full
    ```
@@ -112,7 +112,7 @@ docker exec mlops-api ping minio
    ```bash
    # Restart dependencies
    docker compose -f docker/docker-compose.yml restart mlflow minio
-   
+
    # Wait for healthy
    docker compose -f docker/docker-compose.yml ps
    ```

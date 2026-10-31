@@ -48,7 +48,7 @@ COPY --from=builder /app/src ./src
 COPY --from=builder /app/params.yaml ./
 
 # Create directories
-RUN mkdir -p models data/processed metrics reports/drift && chown -R appuser:appuser /app
+RUN mkdir -p models data/processed metrics reports/drift logs && chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser

@@ -9,9 +9,11 @@ This script:
 """
 
 from pathlib import Path
+from typing import Any, cast
 
 import joblib
 import mlflow.sklearn
+import numpy as np
 import pandas as pd
 from omegaconf import DictConfig, OmegaConf
 
@@ -29,7 +31,9 @@ from mlops_fraud_detection.common.utils import (
 logger = get_logger(__name__)
 
 
-def load_processed_data(train_path: str, val_path: str, target_column: str) -> tuple:
+def load_processed_data(
+    train_path: str, val_path: str, target_column: str
+) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series]:
     """Load processed train and validation data."""
     logger.info("Loading processed data", train_path=train_path, val_path=val_path)
 
@@ -52,7 +56,7 @@ def load_processed_data(train_path: str, val_path: str, target_column: str) -> t
     return X_train, y_train, X_val, y_val
 
 
-def create_model(config: DictConfig):
+def create_model(config: DictConfig) -> Any:
     """Create model instance based on config."""
     model_type = config.training.model_type
     params = config.training
@@ -112,14 +116,20 @@ def create_model(config: DictConfig):
     return model
 
 
-def train_model(model, X_train, y_train, X_val, y_val, config: DictConfig):
+def train_model(
+    model: Any,
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    X_val: pd.DataFrame,
+    y_val: pd.Series,
+    config: DictConfig,
+) -> Any:
     """Train model with early stopping if supported."""
     logger.info("Training model")
 
     model_type = config.training.model_type
 
     if model_type in ["xgboost", "lightgbm"]:
-        # These support early stopping with eval_set
         model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
     else:
         model.fit(X_train, y_train)
@@ -128,7 +138,9 @@ def train_model(model, X_train, y_train, X_val, y_val, config: DictConfig):
     return model
 
 
-def evaluate_model(model, X_val, y_val, threshold: float = 0.5) -> dict:
+def evaluate_model(
+    model: Any, X_val: pd.DataFrame, y_val: pd.Series, threshold: float = 0.5
+) -> tuple[dict[str, float], np.ndarray, np.ndarray]:
     """Evaluate model on validation set."""
     logger.info("Evaluating model")
 
@@ -144,16 +156,16 @@ def evaluate_model(model, X_val, y_val, threshold: float = 0.5) -> dict:
 
 
 def log_to_mlflow(
-    model,
-    metrics: dict,
+    model: Any,
+    metrics: dict[str, Any],
     config: DictConfig,
     git_sha: str,
     preprocessor_path: str,
-    X_val,
-    y_val,
-    y_pred,
-    y_pred_proba,
-):
+    X_val: pd.DataFrame,
+    y_val: pd.Series,
+    y_pred: np.ndarray,
+    y_pred_proba: np.ndarray,
+) -> str:
     """Log model, metrics, and artifacts to MLflow."""
     logger.info("Logging to MLflow")
 
@@ -164,15 +176,21 @@ def log_to_mlflow(
         run_id = run.info.run_id
 
         # Log parameters
-        mlflow.log_params(OmegaConf.to_container(config.training, resolve=True))
-        mlflow.log_params(OmegaConf.to_container(config.preprocessing, resolve=True))
+        training_container = OmegaConf.to_container(config.training, resolve=True)
+        if isinstance(training_container, dict):
+            mlflow.log_params({str(k): v for k, v in training_container.items()})
+
+        preproc_container = OmegaConf.to_container(config.preprocessing, resolve=True)
+        if isinstance(preproc_container, dict):
+            mlflow.log_params({str(k): v for k, v in preproc_container.items()})
+
         mlflow.log_param("git_sha", git_sha)
-        mlflow.log_param("data_version", get_git_sha())  # Use git SHA as data version proxy
+        mlflow.log_param("data_version", get_git_sha())
 
         # Log metrics
         for name, value in metrics.items():
             if isinstance(value, (int, float)):
-                mlflow.log_metric(name, value)
+                mlflow.log_metric(name, float(value))
 
         # Log model
         mlflow.sklearn.log_model(
@@ -182,7 +200,8 @@ def log_to_mlflow(
         )
 
         # Log preprocessor
-        mlflow.log_artifact(preprocessor_path, "preprocessor")
+        if Path(preprocessor_path).exists():
+            mlflow.log_artifact(preprocessor_path, "preprocessor")
 
         # Log confusion matrix plot
         try:
@@ -224,10 +243,10 @@ def log_to_mlflow(
             logger.warning("Failed to log PR curve", error=str(e))
 
         logger.info("MLflow logging complete", run_id=run_id)
-        return run_id
+        return cast(str, run_id)
 
 
-def save_model_and_metrics(model, metrics: dict, config: DictConfig):
+def save_model_and_metrics(model: Any, metrics: dict[str, Any], config: DictConfig) -> None:
     """Save model to models/ and metrics to metrics/ for DVC."""
     logger.info("Saving model and metrics")
 
@@ -240,12 +259,11 @@ def save_model_and_metrics(model, metrics: dict, config: DictConfig):
     metrics_path = config.metrics.train_file
     Path(metrics_path).parent.mkdir(parents=True, exist_ok=True)
 
-    # Add metadata to metrics
-    metrics_with_meta = {
+    metrics_with_meta: dict[str, Any] = {
         **metrics,
         "git_sha": get_git_sha(),
-        "model_type": config.training.model_type,
-        "threshold": config.serving.threshold,
+        "model_type": str(config.training.model_type),
+        "threshold": float(config.serving.threshold),
     }
     save_json(metrics_with_meta, metrics_path)
 
@@ -256,7 +274,7 @@ def save_model_and_metrics(model, metrics: dict, config: DictConfig):
     logger.info("Model and metrics saved", model_path=model_path, metrics_path=metrics_path)
 
 
-def main():
+def main() -> dict[str, Any]:
     """Main training pipeline."""
     from mlops_fraud_detection.common.utils import setup_logging
 
@@ -271,22 +289,18 @@ def main():
             config.data.train_file, config.data.val_file, config.data.target_column
         )
 
-        # Load preprocessor (for reference)
-        preprocessor = joblib.load(config.model.preprocessor_file)
-
         # Create and train model
         model = create_model(config)
         model = train_model(model, X_train, y_train, X_val, y_val, config)
 
         # Evaluate
         metrics, y_pred, y_pred_proba = evaluate_model(
-            model, X_val, y_val, config.serving.threshold
+            model, X_val, y_val, float(config.serving.threshold)
         )
 
         # Check deployment gates
         gates_passed, gate_checks = check_deployment_gates(metrics, config)
-        metrics["deployment_gates_passed"] = gates_passed
-        metrics["gate_checks"] = gate_checks
+        metrics["deployment_gates_passed"] = bool(gates_passed)
 
         logger.info("Deployment gate check", passed=gates_passed, checks=gate_checks)
 

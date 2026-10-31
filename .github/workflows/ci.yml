@@ -16,37 +16,37 @@ jobs:
     name: Lint & Test
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Needed for git history in DVC
-      
+
       - name: Install uv
         uses: astral-sh/setup-uv@v3
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
-      
+
       - name: Set up Python
         run: uv python install ${{ env.PYTHON_VERSION }}
-      
+
       - name: Install dependencies
         run: uv sync --all-extras --frozen
-      
+
       - name: Install pre-commit
         run: uv run pre-commit install
-      
+
       - name: Run pre-commit hooks
         run: uv run pre-commit run --all-files
-      
+
       - name: Run type check (mypy)
         run: uv run mypy src
-      
+
       - name: Run unit tests
         run: uv run pytest tests/unit -v --cov=src --cov-report=xml
-      
+
       - name: Upload coverage
         uses: codecov/codecov-action@v3
         with:
@@ -63,25 +63,25 @@ jobs:
     permissions:
       contents: read
       actions: read  # For reading DVC cache
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      
+
       - name: Install uv
         uses: astral-sh/setup-uv@v3
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
-      
+
       - name: Set up Python
         run: uv python install ${{ env.PYTHON_VERSION }}
-      
+
       - name: Install dependencies
         run: uv sync --frozen
-      
+
       - name: Configure DVC remote
         run: |
           dvc remote modify myremote url s3://${{ secrets.DVC_BUCKET }}
@@ -92,14 +92,14 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-      
+
       - name: Pull DVC data
         run: dvc pull
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-      
+
       - name: Start MLflow server
         run: |
           pip install mlflow boto3
@@ -113,7 +113,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-      
+
       - name: Run training pipeline
         run: dvc repro train
         env:
@@ -122,7 +122,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-      
+
       - name: Upload model artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -133,12 +133,12 @@ jobs:
             metrics/train.json
             metrics/val.json
           retention-days: 7
-      
+
       - name: Show metrics
         run: |
           echo "## Training Metrics" >> $GITHUB_STEP_SUMMARY
           cat metrics/train.json | jq -r 'to_entries[] | "- \\(.key): \\(.value)"' >> $GITHUB_STEP_SUMMARY
-      
+
       - name: Comment PR with metrics
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
@@ -165,17 +165,17 @@ jobs:
     timeout-minutes: 10
     needs: train
     # This job must pass for deployment to proceed
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Download model artifacts
         uses: actions/download-artifact@v4
         with:
           name: model-artifacts
           path: artifacts
-      
+
       - name: Check deployment gates
         id: gate-check
         run: |
@@ -185,14 +185,14 @@ jobs:
             echo "❌ Metrics file not found"
             exit 1
           fi
-          
+
           # Read thresholds from params.yaml
           MIN_F1=$(grep 'min_f1:' params.yaml | awk '{print $2}')
           MIN_PRECISION=$(grep 'min_precision:' params.yaml | awk '{print $2}')
           MIN_RECALL=$(grep 'min_recall:' params.yaml | awk '{print $2}')
           MIN_PR_AUC=$(grep 'min_pr_auc:' params.yaml | awk '{print $2}')
           MIN_ROC_AUC=$(grep 'min_roc_auc:' params.yaml | awk '{print $2}')
-          
+
           # Extract metrics
           F1=$(jq -r '.f1' $METRICS_FILE)
           PRECISION=$(jq -r '.precision' $METRICS_FILE)
@@ -200,7 +200,7 @@ jobs:
           PR_AUC=$(jq -r '.pr_auc' $METRICS_FILE)
           ROC_AUC=$(jq -r '.roc_auc' $METRICS_FILE)
           GATES_PASSED=$(jq -r '.deployment_gates_passed // false' $METRICS_FILE)
-          
+
           echo "=== Deployment Gate Check ==="
           echo "F1: $F1 (min: $MIN_F1)"
           echo "Precision: $PRECISION (min: $MIN_PRECISION)"
@@ -208,10 +208,10 @@ jobs:
           echo "PR-AUC: $PR_AUC (min: $MIN_PR_AUC)"
           echo "ROC-AUC: $ROC_AUC (min: $MIN_ROC_AUC)"
           echo "Gates Passed: $GATES_PASSED"
-          
+
           # Check each threshold
           FAILED=0
-          
+
           check_metric() {
             local name=$1
             local value=$2
@@ -223,25 +223,25 @@ jobs:
               echo "✅ $name: $value >= $threshold (PASS)"
             fi
           }
-          
+
           check_metric "F1" "$F1" "$MIN_F1"
           check_metric "Precision" "$PRECISION" "$MIN_PRECISION"
           check_metric "Recall" "$RECALL" "$MIN_RECALL"
           check_metric "PR-AUC" "$PR_AUC" "$MIN_PR_AUC"
           check_metric "ROC-AUC" "$ROC_AUC" "$MIN_ROC_AUC"
-          
+
           if [ "$GATES_PASSED" != "true" ]; then
             echo "❌ Overall gates check failed"
             FAILED=1
           fi
-          
+
           if [ $FAILED -eq 1 ]; then
             echo "GATE_RESULT=failed" >> $GITHUB_OUTPUT
             exit 1
           else
             echo "GATE_RESULT=passed" >> $GITHUB_OUTPUT
           fi
-      
+
       - name: Gate result
         run: |
           if [ "${{ steps.gate-check.outputs.GATE_RESULT }}" == "failed" ]; then
@@ -262,21 +262,21 @@ jobs:
       contents: read
       packages: write
       id-token: write
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      
+
       - name: Log in to Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: Extract metadata for API
         id: meta-api
         uses: docker/metadata-action@v5
@@ -286,7 +286,7 @@ jobs:
             type=sha,prefix=sha-
             type=ref,event=branch
             type=raw,value=latest,enable={{is_default_branch}}
-      
+
       - name: Build and push API image
         uses: docker/build-push-action@v5
         with:
@@ -297,7 +297,7 @@ jobs:
           labels: ${{ steps.meta-api.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      
+
       - name: Extract metadata for Train
         id: meta-train
         uses: docker/metadata-action@v5
@@ -306,7 +306,7 @@ jobs:
           tags: |
             type=sha,prefix=sha-
             type=ref,event=branch
-      
+
       - name: Build and push Train image
         uses: docker/build-push-action@v5
         with:
@@ -317,7 +317,7 @@ jobs:
           labels: ${{ steps.meta-train.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      
+
       - name: Extract metadata for Monitor
         id: meta-monitor
         uses: docker/metadata-action@v5
@@ -326,7 +326,7 @@ jobs:
           tags: |
             type=sha,prefix=sha-
             type=ref,event=branch
-      
+
       - name: Build and push Monitor image
         uses: docker/build-push-action@v5
         with:
@@ -349,11 +349,11 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Deploy to staging
         run: |
           echo "Deploying to staging environment..."

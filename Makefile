@@ -70,16 +70,16 @@ pre-commit:
 # Development
 # ==========================================
 test:
-	uv run pytest
+	uv run pytest --cov-fail-under=80
 
 test-unit:
-	uv run pytest tests/unit -v
+	uv run pytest tests/unit -v --no-cov
 
 test-integration:
-	uv run pytest tests/integration -v
+	uv run pytest tests/integration -v --no-cov
 
 test-contract:
-	uv run pytest tests/contract -v
+	uv run pytest tests/contract -v --no-cov
 
 lint:
 	uv run ruff check src tests
@@ -136,10 +136,10 @@ mlflow-ui:
 # Serving
 # ==========================================
 serve:
-	uv run python -m src.serve.main
+	uv run python -m mlops_fraud_detection.serve.main
 
 serve-dev:
-	uv run uvicorn src.serve.main:app --host 0.0.0.0 --port 8000 --reload
+	uv run uvicorn mlops_fraud_detection.serve.main:app --host 0.0.0.0 --port 8000 --reload
 
 serve-docker:
 	docker compose -f docker/docker-compose.yml up -d api
@@ -148,7 +148,7 @@ serve-docker:
 # Monitoring
 # ==========================================
 monitor:
-	uv run python -m src.monitor.drift
+	uv run python -m mlops_fraud_detection.monitor.drift
 
 prometheus-up:
 	docker compose -f docker/docker-compose.yml up -d prometheus grafana node-exporter

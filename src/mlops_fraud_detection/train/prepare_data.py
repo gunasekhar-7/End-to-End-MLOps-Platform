@@ -10,9 +10,9 @@ This script:
 """
 
 from pathlib import Path
+from typing import Any
 
 import joblib
-import numpy as np
 import pandas as pd
 from omegaconf import DictConfig
 
@@ -35,11 +35,11 @@ def load_raw_data(raw_path: str) -> pd.DataFrame:
     return df
 
 
-def validate_data(df: pd.DataFrame, target_column: str) -> dict:
+def validate_data(df: pd.DataFrame, target_column: str) -> dict[str, Any]:
     """Validate data quality and return validation report."""
     logger.info("Validating data")
 
-    report = {
+    report: dict[str, Any] = {
         "n_rows": len(df),
         "n_columns": len(df.columns),
         "missing_values": df.isnull().sum().to_dict(),
@@ -70,7 +70,7 @@ def split_data(
     val_size: float,
     stratify: bool,
     random_state: int,
-) -> tuple:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, pd.Series]:
     """Split data into train/val/test sets."""
     from sklearn.model_selection import train_test_split
 
@@ -86,7 +86,7 @@ def split_data(
     )
 
     # Second split: train vs val
-    val_size_adjusted = val_size / (1 - test_size)
+    val_size_adjusted = val_size / (1.0 - test_size)
     stratify_param = y_temp if stratify else None
     X_train, X_val, y_train, y_val = train_test_split(
         X_temp,
@@ -111,7 +111,7 @@ def split_data(
 
 def build_preprocessor(
     X_train: pd.DataFrame, handle_missing: str, encode_categorical: str, scale_numeric: bool
-):
+) -> tuple[Any, list[str], list[str]]:
     """Build sklearn preprocessing pipeline."""
     from sklearn.compose import ColumnTransformer
     from sklearn.impute import SimpleImputer
@@ -125,9 +125,11 @@ def build_preprocessor(
         scale_numeric=scale_numeric,
     )
 
-    # Identify column types
-    numeric_features = X_train.select_dtypes(include=[np.number]).columns.tolist()
-    categorical_features = X_train.select_dtypes(include=["object", "category"]).columns.tolist()
+    # Identify column types - include string, object and category
+    numeric_features: list[str] = X_train.select_dtypes(include=["number"]).columns.tolist()
+    categorical_features: list[str] = X_train.select_dtypes(
+        include=["category", "string", "object"]
+    ).columns.tolist()
 
     logger.info(
         "Feature types identified",
@@ -136,20 +138,19 @@ def build_preprocessor(
     )
 
     # Numeric transformer
-    numeric_steps = []
+    numeric_steps: list[tuple[str, Any]] = []
     if handle_missing in ["median", "mean"]:
-        strategy = handle_missing
-        numeric_steps.append(("imputer", SimpleImputer(strategy=strategy)))
+        numeric_steps.append(("imputer", SimpleImputer(strategy=handle_missing)))
     elif handle_missing == "drop":
-        # Handled separately
         pass
 
     if scale_numeric:
         numeric_steps.append(("scaler", StandardScaler()))
 
-    numeric_transformer = Pipeline(numeric_steps) if numeric_steps else "passthrough"
+    numeric_transformer: Any = Pipeline(numeric_steps) if numeric_steps else "passthrough"
 
     # Categorical transformer
+    categorical_transformer: Any
     if encode_categorical == "onehot":
         categorical_transformer = Pipeline(
             [
@@ -190,7 +191,7 @@ def build_preprocessor(
     return preprocessor, numeric_features, categorical_features
 
 
-def prepare_data(config: DictConfig) -> dict:
+def prepare_data(config: DictConfig) -> dict[str, Any]:
     """Main data preparation pipeline."""
     params = config
 
@@ -226,7 +227,12 @@ def prepare_data(config: DictConfig) -> dict:
 
         # Get feature names after transformation
         try:
-            feature_names = preprocessor.get_feature_names_out()
+            raw_feature_names = preprocessor.get_feature_names_out()
+            feature_names: list[str] = (
+                raw_feature_names.tolist()
+                if hasattr(raw_feature_names, "tolist")
+                else list(raw_feature_names)
+            )
         except Exception:
             feature_names = [f"feature_{i}" for i in range(X_train_processed.shape[1])]
 
@@ -252,13 +258,13 @@ def prepare_data(config: DictConfig) -> dict:
 
         # Save feature info
         feature_info = {
-            "feature_names": feature_names.tolist(),
+            "feature_names": feature_names,
             "numeric_features": numeric_features,
             "categorical_features": categorical_features,
             "target_column": params.data.target_column,
             "n_features": len(feature_names),
         }
-        save_json(feature_info, "data/processed/feature_info.json")
+        save_json(feature_info, f"{params.data.processed_dir}/feature_info.json")
 
         # Save validation report
         ensure_dir("reports/data_validation")
@@ -278,7 +284,7 @@ def prepare_data(config: DictConfig) -> dict:
             "val_shape": val_df.shape,
             "test_shape": test_df.shape,
             "n_features": len(feature_names),
-            "feature_names": feature_names.tolist(),
+            "feature_names": feature_names,
         }
 
 

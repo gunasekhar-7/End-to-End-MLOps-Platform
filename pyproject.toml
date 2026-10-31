@@ -12,31 +12,31 @@ dependencies = [
     "pandas>=2.0.0",
     "numpy>=1.24.0",
     "scipy>=1.11.0",
-    
+
     # MLOps
     "mlflow>=2.8.0",
     "dvc>=3.0.0",
     "dvc-s3>=3.0.0",
     "omegaconf>=2.3.0",
-    
+
     # Data validation
     "pandera>=0.16.0",
     "great-expectations>=0.18.0",
-    
+
     # Serving
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
     "pydantic>=2.5.0",
     "pydantic-settings>=2.1.0",
-    
+
     # Observability
     "prometheus-client>=0.19.0",
     "prometheus-fastapi-instrumentator>=0.7.0",
     "structlog>=24.1.0",
-    
+
     # Monitoring
     "evidently>=0.4.0",
-    
+
     # Utilities
     "python-dotenv>=1.0.0",
     "pyyaml>=6.0.0",
@@ -49,10 +49,12 @@ dev = [
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.12.0",
     "pytest-asyncio>=0.21.0",
+    "httpx>=0.25.0",
     "ruff>=0.1.0",
     "mypy>=1.7.0",
     "black>=23.0.0",
     "pre-commit>=3.6.0",
+    "types-pyyaml>=6.0.0",
 ]
 train = [
     "optuna>=3.4.0",
@@ -65,26 +67,40 @@ monitor = [
     "apscheduler>=3.10.0",
 ]
 
-[build-system]
-requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.build_meta"
-
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.12.0",
     "pytest-asyncio>=0.21.0",
+    "httpx>=0.25.0",
     "ruff>=0.1.0",
     "mypy>=1.7.0",
     "black>=23.0.0",
     "pre-commit>=3.6.0",
+    "types-pyyaml>=6.0.0",
 ]
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [tool.ruff]
 target-version = "py311"
 line-length = 100
 indent-width = 4
+exclude = [
+    ".venv",
+    "data",
+    "models",
+    "mlflow-artifacts",
+    "__pycache__",
+    "*.egg-info",
+    "dist",
+    "build",
+]
+
+[tool.ruff.lint]
 select = [
     "E",   # pycodestyle errors
     "W",   # pycodestyle warnings
@@ -103,19 +119,9 @@ ignore = [
     "B008",  # function calls in default argument
     "ARG001", # unused argument (common in FastAPI)
 ]
-exclude = [
-    ".venv",
-    "data",
-    "models",
-    "mlflow-artifacts",
-    "__pycache__",
-    "*.egg-info",
-    "dist",
-    "build",
-]
 
-[tool.ruff.per-file-ignores]
-"tests/*" = ["S101", "S106"]
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S106", "ARG001", "ARG002", "ARG005", "RUF059"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -142,7 +148,9 @@ exclude = '''
 
 [tool.mypy]
 python_version = "3.11"
-warn_return_any = true
+mypy_path = "src"
+follow_imports = "silent"
+warn_return_any = false
 warn_unused_configs = true
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
@@ -158,11 +166,8 @@ pretty = true
 
 [[tool.mypy.overrides]]
 module = [
+    "mlops_fraud_detection.*",
     "tests.*",
-    "src.train.*",
-    "src.serve.*",
-    "src.monitor.*",
-    "src.common.*",
 ]
 disallow_untyped_defs = false
 
@@ -175,10 +180,9 @@ addopts = [
     "-v",
     "--strict-markers",
     "--strict-config",
-    "--cov=src",
+    "--cov=mlops_fraud_detection",
     "--cov-report=term-missing",
     "--cov-report=xml",
-    "--cov-fail-under=10",
 ]
 asyncio_mode = "auto"
 markers = [

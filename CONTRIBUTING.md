@@ -151,16 +151,17 @@ tests/
 import pytest
 from src.common.utils import calculate_classification_metrics
 
+
 def test_calculate_classification_metrics():
     y_true = [0, 1, 1, 0, 1]
     y_pred = [0, 1, 1, 0, 0]
     y_proba = [0.1, 0.9, 0.8, 0.2, 0.4]
-    
+
     metrics = calculate_classification_metrics(y_true, y_pred, y_proba)
-    
+
     assert metrics["accuracy"] == 0.8
     assert metrics["precision"] == 1.0
-    assert metrics["recall"] == 2/3
+    assert metrics["recall"] == 2 / 3
     assert "roc_auc" in metrics
     assert "pr_auc" in metrics
 ```

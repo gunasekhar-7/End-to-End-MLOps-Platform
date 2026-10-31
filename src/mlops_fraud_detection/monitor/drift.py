@@ -4,6 +4,7 @@ import json
 import warnings
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import joblib
 import numpy as np
@@ -23,28 +24,27 @@ class DriftDetector:
 
     def __init__(self, config: DictConfig):
         self.config = config
-        self.psi_threshold = config.monitoring.psi_threshold
-        self.ks_threshold = config.monitoring.ks_threshold
-        self.prediction_drift_threshold = config.monitoring.prediction_drift_threshold
-        self.model_staleness_days = config.monitoring.model_staleness_days
+        self.psi_threshold = float(config.monitoring.psi_threshold)
+        self.ks_threshold = float(config.monitoring.ks_threshold)
+        self.prediction_drift_threshold = float(config.monitoring.prediction_drift_threshold)
+        self.model_staleness_days = int(config.monitoring.model_staleness_days)
 
         # Paths
-        self.reference_data_path = config.data.external_dir
-        self.processed_data_path = config.data.processed_dir
-        self.model_path = config.model.model_file
-        self.preprocessor_path = config.model.preprocessor_file
-        self.metrics_path = config.metrics.train_file
+        self.reference_data_path = str(config.data.external_dir)
+        self.processed_data_path = str(config.data.processed_dir)
+        self.model_path = str(config.model.model_file)
+        self.preprocessor_path = str(config.model.preprocessor_file)
+        self.metrics_path = str(config.metrics.train_file)
 
         # State
-        self.reference_data = None
-        self.current_data = None
-        self.model = None
-        self.preprocessor = None
-        self.baseline_metrics = None
+        self.reference_data: pd.DataFrame | None = None
+        self.current_data: pd.DataFrame | None = None
+        self.model: Any = None
+        self.preprocessor: Any = None
+        self.baseline_metrics: dict[str, Any] | None = None
 
-    def load_reference_data(self) -> pd.DataFrame:
+    def load_reference_data(self) -> pd.DataFrame | None:
         """Load reference data for drift comparison."""
-        # Try to load from external data directory
         ref_path = Path(self.reference_data_path) / "reference.parquet"
         if ref_path.exists():
             logger.info("Loading reference data", path=str(ref_path))
@@ -59,12 +59,8 @@ class DriftDetector:
         logger.warning("No reference data found")
         return None
 
-    def load_current_data(self, days_back: int = 7) -> pd.DataFrame:
-        """Load recent data for drift detection.
-
-        In production, this would query a database or data lake.
-        For now, we simulate with test data.
-        """
+    def load_current_data(self) -> pd.DataFrame | None:
+        """Load recent data for drift detection."""
         test_path = Path(self.config.data.test_file)
         if test_path.exists():
             logger.info("Using test data as current data", path=str(test_path))
@@ -73,7 +69,7 @@ class DriftDetector:
         logger.warning("No current data found")
         return None
 
-    def load_model_and_preprocessor(self):
+    def load_model_and_preprocessor(self) -> None:
         """Load model and preprocessor."""
         try:
             self.model = joblib.load(self.model_path)
@@ -83,38 +79,33 @@ class DriftDetector:
             logger.error("Failed to load model/preprocessor", error=str(e))
             raise
 
-    def load_baseline_metrics(self) -> dict:
+    def load_baseline_metrics(self) -> dict[str, Any]:
         """Load baseline metrics from training."""
         if Path(self.metrics_path).exists():
-            with open(self.metrics_path) as f:
-                return json.load(f)
+            with Path(self.metrics_path).open() as f:
+                data: dict[str, Any] = json.load(f)
+                return data
         return {}
 
     def calculate_psi(self, reference: np.ndarray, current: np.ndarray, bins: int = 10) -> float:
         """Calculate Population Stability Index (PSI)."""
-        # Handle edge cases
         if len(reference) == 0 or len(current) == 0:
             return 0.0
 
-        # Create bins based on reference data quantiles
         try:
             _, bin_edges = np.histogram(reference, bins=bins)
-            # Extend edges to cover all current values
             bin_edges[0] = -np.inf
             bin_edges[-1] = np.inf
         except Exception:
             return 0.0
 
-        # Calculate distributions
         ref_hist, _ = np.histogram(reference, bins=bin_edges)
         cur_hist, _ = np.histogram(current, bins=bin_edges)
 
-        # Convert to percentages (add small epsilon to avoid division by zero)
         eps = 1e-6
         ref_perc = (ref_hist + eps) / (len(reference) + eps * bins)
         cur_perc = (cur_hist + eps) / (len(current) + eps * bins)
 
-        # Calculate PSI
         psi = np.sum((cur_perc - ref_perc) * np.log(cur_perc / ref_perc))
         return float(psi)
 
@@ -125,24 +116,24 @@ class DriftDetector:
         ks_stat, _ = stats.ks_2samp(reference, current)
         return float(ks_stat)
 
-    def detect_data_drift(self, reference_df: pd.DataFrame, current_df: pd.DataFrame) -> dict:
+    def detect_data_drift(
+        self, reference_df: pd.DataFrame, current_df: pd.DataFrame
+    ) -> dict[str, Any]:
         """Detect data drift using PSI and KS test on features."""
         logger.info("Detecting data drift")
 
-        # Get numeric columns (excluding target)
-        target_col = self.config.data.target_column
+        target_col = str(self.config.data.target_column)
         numeric_cols = reference_df.select_dtypes(include=[np.number]).columns.tolist()
         if target_col in numeric_cols:
             numeric_cols.remove(target_col)
 
-        drift_results = {
-            "features_checked": len(numeric_cols),
-            "drift_detected": False,
-            "drifted_features": [],
-            "feature_drift_scores": {},
-        }
+        feature_scores: dict[str, Any] = {}
+        drifted_features: list[dict[str, Any]] = []
 
         for col in numeric_cols:
+            if col not in current_df.columns:
+                continue
+
             ref_vals = reference_df[col].dropna().values
             cur_vals = current_df[col].dropna().values
 
@@ -152,7 +143,7 @@ class DriftDetector:
             psi = self.calculate_psi(ref_vals, cur_vals)
             ks = self.calculate_ks_statistic(ref_vals, cur_vals)
 
-            drift_results["feature_drift_scores"][col] = {
+            feature_scores[col] = {
                 "psi": psi,
                 "ks": ks,
                 "psi_alert": psi > self.psi_threshold,
@@ -160,8 +151,7 @@ class DriftDetector:
             }
 
             if psi > self.psi_threshold or ks > self.ks_threshold:
-                drift_results["drift_detected"] = True
-                drift_results["drifted_features"].append(
+                drifted_features.append(
                     {
                         "feature": col,
                         "psi": psi,
@@ -169,59 +159,68 @@ class DriftDetector:
                     }
                 )
 
+        drift_results: dict[str, Any] = {
+            "features_checked": len(feature_scores),
+            "drift_detected": len(drifted_features) > 0,
+            "drifted_features": drifted_features,
+            "feature_drift_scores": feature_scores,
+        }
+
         logger.info(
             "Data drift detection complete",
-            **{k: v for k, v in drift_results.items() if k != "feature_drift_scores"},
+            drift_detected=drift_results["drift_detected"],
+            drifted_count=len(drifted_features),
         )
         return drift_results
 
-    def detect_prediction_drift(self, current_df: pd.DataFrame) -> dict:
+    def detect_prediction_drift(self, current_df: pd.DataFrame) -> dict[str, Any]:
         """Detect prediction drift by comparing prediction distributions."""
         logger.info("Detecting prediction drift")
 
         if self.model is None or self.preprocessor is None:
             self.load_model_and_preprocessor()
 
-        target_col = self.config.data.target_column
+        target_col = str(self.config.data.target_column)
         X_current = (
             current_df.drop(columns=[target_col])
             if target_col in current_df.columns
             else current_df
         )
 
-        # Preprocess
         try:
             X_processed = self.preprocessor.transform(X_current)
         except Exception as e:
             logger.error("Preprocessing failed for prediction drift", error=str(e))
-            return {"error": str(e)}
+            return {"error": str(e), "drift_detected": False}
 
-        # Get predictions
         preds = self.model.predict_proba(X_processed)[:, 1]
-
-        # Compare with baseline prediction distribution
         baseline_metrics = self.load_baseline_metrics()
-        baseline_fraud_rate = baseline_metrics.get("fraud_rate", 0.5)  # fallback
 
-        current_fraud_rate = float(np.mean(preds))
-        diff_std = abs(current_fraud_rate - baseline_fraud_rate) / (np.std(preds) + 1e-6)
+        if not baseline_metrics or "fraud_rate" not in baseline_metrics:
+            baseline_fraud_rate = float(np.mean(preds))
+            diff_std = 0.0
+            drift_detected = False
+        else:
+            baseline_fraud_rate = float(baseline_metrics.get("fraud_rate", 0.5))
+            current_fraud_rate = float(np.mean(preds))
+            diff_std = float(abs(current_fraud_rate - baseline_fraud_rate) / (np.std(preds) + 1e-6))
+            drift_detected = diff_std > self.prediction_drift_threshold
 
-        drift_results = {
+        drift_results: dict[str, Any] = {
             "baseline_fraud_rate": baseline_fraud_rate,
-            "current_fraud_rate": current_fraud_rate,
+            "current_fraud_rate": float(np.mean(preds)),
             "std_deviations": diff_std,
-            "drift_detected": diff_std > self.prediction_drift_threshold,
+            "drift_detected": drift_detected,
             "threshold": self.prediction_drift_threshold,
         }
 
         logger.info("Prediction drift detection complete", **drift_results)
         return drift_results
 
-    def check_model_staleness(self) -> dict:
+    def check_model_staleness(self) -> dict[str, Any]:
         """Check if model is stale (not retrained recently)."""
         logger.info("Checking model staleness")
 
-        # Get model file modification time
         model_path = Path(self.model_path)
         if not model_path.exists():
             return {"stale": True, "reason": "Model file not found"}
@@ -229,7 +228,7 @@ class DriftDetector:
         mtime = datetime.fromtimestamp(model_path.stat().st_mtime)
         age_days = (datetime.now() - mtime).days
 
-        result = {
+        result: dict[str, Any] = {
             "model_age_days": age_days,
             "staleness_threshold_days": self.model_staleness_days,
             "stale": age_days > self.model_staleness_days,
@@ -239,12 +238,12 @@ class DriftDetector:
         logger.info("Model staleness check complete", **result)
         return result
 
-    def run_drift_checks(self) -> dict:
+    def run_drift_checks(self) -> dict[str, Any]:
         """Run all drift checks."""
         logger.info("Starting drift detection checks")
 
         with Timer("drift_detection", logger):
-            results = {
+            results: dict[str, Any] = {
                 "timestamp": datetime.now().isoformat(),
                 "data_drift": {},
                 "prediction_drift": {},
@@ -252,34 +251,30 @@ class DriftDetector:
                 "overall_drift_detected": False,
             }
 
-            # Load data
             self.reference_data = self.load_reference_data()
             self.current_data = self.load_current_data()
 
             if self.reference_data is not None and self.current_data is not None:
-                # Data drift
                 results["data_drift"] = self.detect_data_drift(
                     self.reference_data, self.current_data
                 )
-
-                # Prediction drift
                 results["prediction_drift"] = self.detect_prediction_drift(self.current_data)
             else:
                 logger.warning("Skipping drift checks - insufficient data")
-                results["data_drift"] = {"error": "Insufficient data"}
-                results["prediction_drift"] = {"error": "Insufficient data"}
+                results["data_drift"] = {"error": "Insufficient data", "drift_detected": False}
+                results["prediction_drift"] = {
+                    "error": "Insufficient data",
+                    "drift_detected": False,
+                }
 
-            # Model staleness
             results["model_staleness"] = self.check_model_staleness()
 
-            # Overall drift flag
-            results["overall_drift_detected"] = (
-                results["data_drift"].get("drift_detected", False)
-                or results["prediction_drift"].get("drift_detected", False)
-                or results["model_staleness"].get("stale", False)
-            )
+            data_drift_flag = bool(results["data_drift"].get("drift_detected", False))
+            pred_drift_flag = bool(results["prediction_drift"].get("drift_detected", False))
+            staleness_flag = bool(results["model_staleness"].get("stale", False))
 
-            # Save results
+            results["overall_drift_detected"] = data_drift_flag or pred_drift_flag or staleness_flag
+
             ensure_dir("reports/drift")
             save_json(results, "reports/drift/drift_report.json")
 
@@ -287,7 +282,7 @@ class DriftDetector:
             return results
 
 
-def main():
+def main() -> int:
     """Main drift detection entry point."""
     from mlops_fraud_detection.common.utils import setup_logging
 
@@ -297,7 +292,6 @@ def main():
     detector = DriftDetector(config)
     results = detector.run_drift_checks()
 
-    # Print summary
     print("\n=== Drift Detection Report ===")
     print(f"Timestamp: {results['timestamp']}")
     print(f"Overall Drift Detected: {results['overall_drift_detected']}")
@@ -315,7 +309,6 @@ def main():
     if "model_age_days" in results["model_staleness"]:
         print(f"  Model age: {results['model_staleness']['model_age_days']} days")
 
-    # Exit with code 1 if drift detected (for CI/CD integration)
     if results["overall_drift_detected"]:
         print("\n⚠️  DRIFT DETECTED - Consider retraining")
         return 1
@@ -325,4 +318,6 @@ def main():
 
 
 if __name__ == "__main__":
-    exit(main())
+    import sys
+
+    sys.exit(main())

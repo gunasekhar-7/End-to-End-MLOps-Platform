@@ -65,7 +65,7 @@ gh run list --workflow=retrain.yml --limit 5
    ```bash
    # Via GitHub Actions
    gh workflow run retrain.yml -f force_retrain=true
-   
+
    # Or locally
    make train-full
    ```
@@ -85,7 +85,7 @@ gh run list --workflow=retrain.yml --limit 5
    ```bash
    # Check drift-detector logs
    docker logs mlops-drift-detector
-   
+
    # Check cron
    docker exec mlops-drift-detector crontab -l
    ```

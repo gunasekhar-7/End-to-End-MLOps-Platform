@@ -95,7 +95,7 @@ docker logs mlops-api | grep "fraud_probability" | tail -20
    ```bash
    # Manual trigger via GitHub Actions
    gh workflow run retrain.yml -f force_retrain=true
-   
+
    # Or locally
    make train-full
    ```
@@ -104,7 +104,7 @@ docker logs mlops-api | grep "fraud_probability" | tail -20
    ```bash
    # Get top drifted features
    cat reports/drift/drift_report.json | jq '.data_drift.drifted_features'
-   
+
    # Check if new categories/values appeared
    ```
 

@@ -187,5 +187,46 @@ class TestTimer:
         assert timer.elapsed < 1.0  # Should be much less than 1 second
 
 
+class TestGeneralUtils:
+    """Tests for git SHA, directory creation, logging setup and config loading."""
+
+    def test_ensure_dir(self, tmp_path):
+        from mlops_fraud_detection.common.utils import ensure_dir
+
+        target = tmp_path / "new_level" / "nested"
+        res = ensure_dir(target)
+        assert res.exists()
+        assert res.is_dir()
+
+    def test_get_git_sha(self):
+        from mlops_fraud_detection.common.utils import get_git_sha
+
+        sha = get_git_sha()
+        assert isinstance(sha, str)
+        assert len(sha) > 0
+
+    def test_setup_logging(self):
+        from mlops_fraud_detection.common.utils import setup_logging
+
+        setup_logging("DEBUG")
+        setup_logging("INFO")
+
+    def test_load_params(self):
+        from mlops_fraud_detection.common.utils import load_params
+
+        config = load_params("params.yaml")
+        assert hasattr(config, "data")
+        assert hasattr(config, "training")
+        assert hasattr(config, "serving")
+
+    def test_single_class_metrics(self):
+        y_true = [0, 0, 0, 0]
+        y_pred = [0, 0, 0, 0]
+        y_proba = [0.1, 0.2, 0.3, 0.1]
+        metrics = calculate_classification_metrics(y_true, y_pred, y_proba)
+        assert metrics["accuracy"] == 1.0
+        assert metrics["roc_auc"] == 0.0  # Safe fallback for single class
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

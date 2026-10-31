@@ -19,7 +19,7 @@ build/
 *.egg
 
 # UV
-uv.lock
+# uv.lock must NOT be gitignored so CI/CD and Docker builds can deterministically sync dependencies
 
 # DVC
 data/
