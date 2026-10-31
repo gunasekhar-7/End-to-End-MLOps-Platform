@@ -37,7 +37,9 @@ class TestAPIContract:
 
         assert "200" in predict_spec["responses"]
         assert "application/json" in predict_spec["responses"]["200"]["content"]
-        assert "Predict" in predict_spec.get("summary", "") or "prediction" in predict_spec.get("description", "")
+        assert "Predict" in predict_spec.get("summary", "") or "prediction" in predict_spec.get(
+            "description", ""
+        )
 
     def test_transaction_input_schema_contract(self):
         schema = TransactionInput.model_json_schema()

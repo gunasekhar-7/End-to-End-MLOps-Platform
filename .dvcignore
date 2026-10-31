@@ -1,0 +1,9 @@
+# Add patterns of files dvc should ignore, which could improve
+# the performance of the repository.
++*
+.git
+.hg
+.venv
+__pycache__
+*.pyc
+

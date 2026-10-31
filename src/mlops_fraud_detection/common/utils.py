@@ -46,6 +46,7 @@ def save_json(data: dict[str, Any], path: str) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with Path(path).open("w") as f:
         json.dump(data, f, indent=2)
+        f.write("\n")
 
 
 def load_json(path: str) -> dict[str, Any]:

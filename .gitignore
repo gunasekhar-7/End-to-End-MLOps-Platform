@@ -25,7 +25,6 @@ build/
 data/
 models/
 mlflow-artifacts/
-.dvc/
 .dvc/cache/
 .dvc/tmp/
 .dvc/config.local

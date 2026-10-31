@@ -9,7 +9,7 @@
   "false_positives": 0.0,
   "false_negatives": 2.0,
   "true_positives": 0.0,
-  "git_sha": "ad52e0a8e7ead31475e27c97336ea57860f15b2d",
+  "git_sha": "28552d3e1ecd07ace033e0624c567799b6a65915",
   "model_type": "xgboost",
   "threshold": 0.5
 }
