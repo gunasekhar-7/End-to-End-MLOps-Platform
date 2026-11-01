@@ -120,6 +120,10 @@ ignore = [
     "ARG001", # unused argument (common in FastAPI)
 ]
 
+[tool.ruff.lint.isort]
+known-first-party = ["mlops_fraud_detection"]
+known-third-party = ["mlflow"]
+
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S106", "ARG001", "ARG002", "ARG005", "RUF059"]
 "tests/*" = ["S101", "S106", "ARG001", "ARG002", "ARG005", "RUF059"]

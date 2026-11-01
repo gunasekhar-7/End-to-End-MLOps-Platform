@@ -12,12 +12,12 @@ from pathlib import Path
 from typing import Any, cast
 
 import joblib
+import mlflow
 import mlflow.sklearn
 import numpy as np
 import pandas as pd
 from omegaconf import DictConfig, OmegaConf
 
-import mlflow
 from mlops_fraud_detection.common.utils import (
     Timer,
     calculate_classification_metrics,

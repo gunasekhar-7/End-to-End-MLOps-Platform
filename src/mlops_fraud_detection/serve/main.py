@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import joblib
+import mlflow
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -15,7 +16,6 @@ from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, ge
 from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel, ConfigDict, Field
 
-import mlflow
 from mlops_fraud_detection.common.utils import get_logger, load_params, setup_logging
 
 # Setup logging
