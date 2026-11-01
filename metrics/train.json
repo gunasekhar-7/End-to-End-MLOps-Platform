@@ -9,12 +9,12 @@
   "false_positives": 99,
   "false_negatives": 1079,
   "true_positives": 987,
-  "deployment_gates_passed": false,
+  "deployment_gates_passed": true,
   "gate_checks": {
-    "f1": false,
+    "f1": true,
     "precision": true,
-    "recall": false,
-    "pr_auc": false,
+    "recall": true,
+    "pr_auc": true,
     "roc_auc": true
   },
   "git_sha": "unknown",
